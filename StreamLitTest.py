@@ -16,13 +16,80 @@ st.set_page_config(page_title="Testing Streamlit", layout="wide")
 st.title("Hello World!")
 st.subheader("We data profilin', we looking at that data")
 
-with st.sidebar.expander("About the App"):
-     st.write("""
-        This data profiling App was built by My Data Talk using Streamlit and pandas_profiling package. You can use the app to quickly generate a comprehensive data profiling and EDA report without the need to write any python code. \n\nThe app has the minimum mode (recommended) and the complete code. The complete code includes more sophisticated analysis such as correlation analysis or interactions between variables which may requires expensive computations. )
-     """)
-
 # Initialize snowpark connection. 
 hackathon_conn = st.experimental_connection('snowpark')
+
+category_list = []
+sub_category_list = []
+
+# Create Category Dataframe
+category_df = hackathon_conn.query(f'''  
+SELECT DISTINCT TRIM(SPLIT(TS.VARIABLE_NAME, ':')[0]) as CATEGORY
+FROM GEO_INDEX          GI
+    JOIN GEO_OVERLAPS   GO ON GI.ID         = GO.GEO_ID
+    JOIN TIMESERIES     TS ON GI.ID         = TS.GEO_ID
+WHERE GI.GEO_NAME LIKE '%Texas%'  
+ORDER BY TRIM(SPLIT(TS.VARIABLE_NAME, ':')[0])
+''')
+
+# Create Category List
+for category in category_df.itertuples():
+
+    category_list.append(category.CATEGORY)
+
+
+# Create Sub-Category Dataframe
+sub_category_df = hackathon_conn.query(f'''  
+SELECT DISTINCT TRIM(SPLIT(TS.VARIABLE_NAME, ':')[0]) as CATEGORY, TRIM(SPLIT(TS.VARIABLE_NAME, ':')[1]) as SUB_CATEGORY
+FROM GEO_INDEX          GI
+    JOIN GEO_OVERLAPS   GO ON GI.ID         = GO.GEO_ID
+    JOIN TIMESERIES     TS ON GI.ID         = TS.GEO_ID
+WHERE GI.GEO_NAME LIKE '%Texas%' 
+''')
+
+# Create Sub-Category List
+for sub_category in sub_category_df.itertuples():
+
+    sub_category_list.append(sub_category.SUB_CATEGORY)
+
+def sub_category_select():
+    st.write(selected_sub_category)
+
+selected_category = st.sidebar.selectbox('Select the category you\'d like to see.', category_list)
+
+st.write(selected_category)
+
+sub_categories = sub_category_df["SUB_CATEGORY"].loc[sub_category_df['CATEGORY'] == selected_category]
+
+selected_sub_category = st.sidebar.selectbox('Select the sub-category you\'d like to see.', sub_categories)
+
+# Using expanders for each section for ease of access and smaller initial page size
+with st.expander(f'Testing Dynamic SQL Based On Categories'):
+
+    variable_value = selected_category
+
+    if selected_sub_category is not None:
+        variable_value = variable_value + ': ' + selected_sub_category
+
+    sql_query = f'''  
+
+        SELECT GI.ID, GI.GEO_NAME, GI.LEVEL, listagg(REPLACE(GO.OVERLAPS_WITH, 'zip/', ''), ',') as ZIP_CODES, TS.VARIABLE, TS.VARIABLE_NAME, TS.DATE, TS.VALUE, TS.UNIT, TS.CATEGORY, TS.MEASUREMENT_METHOD 
+        FROM GEO_INDEX          GI
+            JOIN GEO_OVERLAPS   GO ON GI.ID         = GO.GEO_ID
+            JOIN TIMESERIES     TS ON GI.ID         = TS.GEO_ID
+        WHERE 1 = 1
+            --AND GI.GEO_NAME LIKE '%Texas%'
+            --AND LEVEL       = 'City'
+            AND VARIABLE_NAME = \'''' + variable_value + '''\'
+        GROUP BY GI.ID, GI.GEO_NAME, GI.LEVEL, TS.VARIABLE, TS.VARIABLE_NAME, TS.DATE, TS.VALUE, TS.UNIT, TS.CATEGORY, TS.MEASUREMENT_METHOD
+        ORDER BY GI.ID, TS.VARIABLE, TS.DATE;
+
+        '''
+    
+    st.write(sql_query)
+    
+    df = hackathon_conn.query(sql_query)
+    st.dataframe(df)
 
 # Using expanders for each section for ease of access and smaller initial page size
 with st.expander(f'Combining Datasets'):
@@ -43,14 +110,6 @@ with st.expander(f'Combining Datasets'):
     st.dataframe(df)
 
     df = hackathon_conn.query(f"SELECT DISTINCT GEO_NAME, LEVEL FROM GEO_INDEX WHERE GEO_NAME LIKE '%Texas%' AND LEVEL = 'City';")
-    st.dataframe(df)
-
-    df = hackathon_conn.query(f'''  SELECT DISTINCT TS.CATEGORY
-                                    FROM GEO_INDEX          GI
-                                        JOIN GEO_OVERLAPS   GO ON GI.ID         = GO.GEO_ID
-                                        JOIN TIMESERIES     TS ON GI.ID         = TS.GEO_ID
-                                    WHERE GI.GEO_NAME LIKE '%Texas%' 
-                                    ORDER BY TS.CATEGORY ''')
     st.dataframe(df)
 
     df = hackathon_conn.query(f'''  
