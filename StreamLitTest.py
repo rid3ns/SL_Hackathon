@@ -1,37 +1,115 @@
-import streamlit as st
-import pandas as pd
-import numpy as np
-import pydeck as pdk
-import sys
-import pgeocode
-import time
+#snowpark
+from snowflake.snowpark.session   import Session
+from snowflake.snowpark.types     import IntegerType, StringType, StructField, StructType, DateType, DecimalType
+from snowflake.snowpark.functions import avg, sum, col, call_udf, lit, call_builtin, year, to_decimal, split, trim
+from snowflake.snowpark import dataframe 
 
+# graphing 
+import streamlit as st
+import pgeocode
+import altair as alt
+
+# analytics 
+import pandas as pd
+import numpy  as np
+import pydeck as pdk
 from pydeck.types import String
+
+# else
+import sys
+import time
+import datetime
 from datetime import date
 from dateutil.relativedelta import relativedelta
+
+@st.cache_data
+def get_data(selected_category, selected_sub_category, selected_level, selected_state):
+
+    hackathon_conn = st.experimental_connection('snowpark')
+
+    # Assinging category to variable_name
+    variable_name = selected_category
+
+    # If there is a sub-category, append to category with colon in-betwee as this is how the value for the column VARIABLE_NAME is setup
+    if selected_sub_category is not None:
+        variable_name = variable_name + ': ' + selected_sub_category
+
+    df_DataCommonsAgg = hackathon_conn.session.table("DATA_COMMONS_AGG_FILTERED_ZIP_CODES")
+    source            = df_DataCommonsAgg.filter(  (col('"VARIABLE_NAME"') == variable_name) 
+                                                 & (col('"LEVEL"')         == selected_level)
+                                                 & (col('"STATE"')         == selected_state)
+                                                 )\
+                                         .select(['ZIP_CODES', 'VALUE', 'GEO_NAME', 'DATE', 'CENTER_LAT', 'CENTER_LONG', 'MIN_LAT', 'MIN_LONG', 'MAX_LAT', 'MAX_LONG']).to_pandas()
+    return source
+
+@st.cache_data
+def get_data_V2(selected_category, selected_sub_category, selected_level, selected_state):
+
+    hackathon_conn = st.experimental_connection('snowpark')
+    
+    # Assinging category to variable_name
+    variable_name = selected_category
+
+    # If there is a sub-category, append to category with colon in-betwee as this is how the value for the column VARIABLE_NAME is setup
+    if selected_sub_category is not None:
+        variable_name = variable_name + ': ' + selected_sub_category
+
+    # Dynamic sql to allow use of variables in where clause
+    sql_query = f'''  
+
+        SELECT DCA.*, LZC.CENTER_LAT, LZC.CENTER_LONG, LZC.MIN_LAT, LZC.MIN_LONG, LZC.MAX_LAT, LZC.MAX_LONG
+        FROM DATA_COMMONS_AGG DCA
+        JOIN LKP_ZIP_CODES LZC ON DCA.ZIP_CODES = LZC.ZIP_CODES
+        WHERE 1 = 1
+            AND STATE           = \'''' + selected_state + '''\'
+            AND LEVEL           = \'''' + selected_level + '''\'
+            AND VARIABLE_NAME   = \'''' + variable_name + '''\'
+        ORDER BY ID, VARIABLE, DATE;
+
+        '''
+
+    # Assign dataframe to query response
+    main_df = hackathon_conn.query(sql_query)
+
+    return main_df
+
+# Debugging flag
+debugging = False
 
 # Setting up geocoding for United States
 nomi = pgeocode.Nominatim('US')
 
 # Page Config
-st.set_page_config(page_title="Public Data Analytics", layout="wide")
+st.set_page_config(
+    page_title="Census Engagement Data",
+    page_icon="🧊",
+    layout="wide",
+    initial_sidebar_state="expanded",
+    menu_items={
+        'About': "This app builds a graphic model based off values provided by snowpark and snowflake data"
+    }
+ )
 
 # Page Header/Subheader
 st.title("Public Data Analytics")
-#st.subheader("We data profilin', we looking at that data")
 
 # Initialize snowpark connection. 
 hackathon_conn = st.experimental_connection('snowpark')
 
-category_list = []
+# Start Side Panel # - This code creates the side panel which filters the overall site 
+state_list        = []
+level_list        = []
+category_list     = []
 sub_category_list = []
 
-# Create State Datafram
-state_df = hackathon_conn.query(f"SELECT DISTINCT GEO_NAME as STATE FROM DATA_COMMONS_PUBLIC_DATA.CYBERSYN.GEO_INDEX WHERE LEVEL = 'State' ORDER BY GEO_NAME;")
-# State Select Box
-selected_state = st.sidebar.selectbox('Select the state you\'d like to see public data for.', state_df)
+layer_types = ['Heat Map', 'Hexagon']
 
-# Create Category Dataframe
+# tables to use in side Panel
+df_LKP_State       = hackathon_conn.session.table("LKP_States").order_by('STATE')
+df_LKP_Levels      = hackathon_conn.session.table("LKP_LEVELS")
+#df_LKP_Category    = hackathon_conn.session.table("LKP_Categories")
+#df_LKP_SubCategory = hackathon_conn.session.table("LKP_SubCategories")
+
 category_df = hackathon_conn.query(f'''  
 SELECT DISTINCT TRIM(SPLIT(TS.VARIABLE_NAME, ':')[0]) as CATEGORY
 FROM DATA_COMMONS_PUBLIC_DATA.CYBERSYN.GEO_INDEX          GI
@@ -41,7 +119,7 @@ WHERE GI.GEO_NAME LIKE '%Texas%'
 ORDER BY TRIM(SPLIT(TS.VARIABLE_NAME, ':')[0])
 ''')
 
-# Create Sub-Category Dataframe
+
 sub_category_df = hackathon_conn.query(f'''  
 SELECT DISTINCT TRIM(SPLIT(TS.VARIABLE_NAME, ':')[0]) as CATEGORY, TRIM(SPLIT(TS.VARIABLE_NAME, ':')[1]) as SUB_CATEGORY
 FROM DATA_COMMONS_PUBLIC_DATA.CYBERSYN.GEO_INDEX          GI
@@ -50,181 +128,218 @@ FROM DATA_COMMONS_PUBLIC_DATA.CYBERSYN.GEO_INDEX          GI
 WHERE GI.GEO_NAME LIKE '%Texas%' 
 ''')
 
-# Category select box
-selected_category = st.sidebar.selectbox('Select the category you\'d like to see.', category_df)
+# Debug Checkbox
+# debugging = st.sidebar.checkbox('Debugging')
 
-# Setting list of Sub-Categories based on chosen Category
-sub_categories = sub_category_df["SUB_CATEGORY"].loc[sub_category_df['CATEGORY'] == selected_category]
-# Sub-Category select box
-selected_sub_category = st.sidebar.selectbox('Select the sub-category you\'d like to see.', sub_categories)
+# SideBar items
+selected_state          = st.sidebar.selectbox('Select the state you\'d like to see public data for.', df_LKP_State)
+selected_level          = st.sidebar.selectbox('Select the level you\'d like to filter to.', df_LKP_Levels)
+selected_category       = st.sidebar.selectbox('Select the category you\'d like to see.', category_df)
 
-# Using expanders for each section for ease of access and smaller initial page size
-with st.expander(f'Testing Dynamic SQL Based On Categories'):
+sub_categories          = sub_category_df["SUB_CATEGORY"].loc[sub_category_df['CATEGORY'] == selected_category]
+selected_sub_category   = st.sidebar.selectbox('Select the sub-category you\'d like to see.', sub_categories)
 
-    # Assinging category to variable_value
-    variable_value = selected_category
+# Get Data
+# main_df = get_data_V2(selected_category, selected_sub_category, selected_level, selected_state)
 
-    # If there is a sub-category, append to category with colon in-betwee as this is how the value for the column VARIABLE_NAME is setup
-    if selected_sub_category is not None:
-        variable_value = variable_value + ': ' + selected_sub_category
+# Get dataset for charts 
+df_format = get_data(selected_category, selected_sub_category, selected_level, selected_state)
 
-    # Mesuring time of query to help debugging performance
-    start_query_time = time.perf_counter()
+start_date, end_date = date.today(), date.today()
 
-    # Dynamic sql to allow use of variables in where clause
-    sql_query = f'''  
-
-        SELECT DCA.*, LZC.CENTER_LAT, LZC.CENTER_LONG, LZC.MIN_LAT, LZC.MIN_LONG, LZC.MAX_LAT, LZC.MAX_LONG
-        FROM DATA_COMMONS_AGG DCA
-        JOIN LOOKUP_ZIP_CODES LZC ON DCA.ZIP_CODES = LZC.ZIP_CODES
-        WHERE 1 = 1
-            AND STATE           = \'''' + selected_state + '''\'
-            AND VARIABLE_NAME   = \'''' + variable_value + '''\'
-        ORDER BY ID, VARIABLE, DATE;
-
-        '''
-    
-    # For debugging
-    #st.write(sql_query)
-    
-    # Assign dataframe to query response
-    main_df = hackathon_conn.query(sql_query)
-
-    # Mesuring time of query to help debugging performance
-    end_query_time = time.perf_counter()
-    elapsed_query_time = end_query_time - start_query_time
-    st.write(f'Elapsed time for query: {elapsed_query_time} seconds')
+main_df = None
+if len(df_format) != 0:
 
     # Create date input on sidebar based on min and max date values from dataset
-    selected_date = st.sidebar.date_input(f"Date:", value=(main_df['DATE'].min(), main_df['DATE'].max()))#, min_value=min_date, max_value=max_date)
-
-    layer_types = ['Heat Map', 'Hexagon']
-
+    selected_date       = st.sidebar.date_input(f"Date:", value=(df_format['DATE'].min(), df_format['DATE'].max()))
     selected_layer_type = st.sidebar.selectbox('Select the layer type you would like to see on the geo graph.', layer_types)
+
+    selected_date_input = tuple(map(pd.to_datetime, selected_date))
+    start_date, end_date = selected_date_input
 
     # If start and end date are chosen from date input, update dataframe date range
     if len(selected_date) == 2:
+
         selected_date_input = tuple(map(pd.to_datetime, selected_date))
         start_date, end_date = selected_date_input
 
-    
-        st.write(f'Slicing dataframe based on date...')
-        # Measuring time of dataframe display
-        start_query_time = time.perf_counter()
+        main_df = df_format.loc[df_format['DATE'].between(start_date, end_date)]
 
-        main_df = main_df.loc[main_df['DATE'].between(start_date, end_date)]
 
-        # Measuring time of dataframe display to help debugging performance
-        end_query_time = time.perf_counter()
-        elapsed_query_time = end_query_time - start_query_time
-        st.write(f'Elapsed time for slicing dataframe: {elapsed_query_time} seconds')
+# Display selected values at the top of the screen 
+col11, col12, col13, col14, col15 = st.columns(5)
+with st.container():
+
+    with col11:
+        st.metric("Date Range", f'{start_date.strftime("%m/%d/%Y")} - {end_date.strftime("%m/%d/%Y")}', delta=None, delta_color=("normal"))
+    with col12:
+        st.metric("State", selected_state, delta=None, delta_color=("normal")) 
+    with col13:           
+        st.metric("Level", selected_level, delta=None, delta_color=("normal"))
+    with col14:           
+        st.metric("Category", selected_category, delta=None, delta_color=("normal"))
+    with col15:           
+        st.metric("Sub-Category", selected_sub_category, delta=None, delta_color=("normal"))
+
+
+#####################################################################
+#   BEGIN - CHART SECTION
+#####################################################################
+
+
+# START FIRST COLLAPSABLE VISUALIZATION GROUPING. # 
+with st.expander(selected_category + " in " + selected_level + " " + selected_state + " Pie Visual"):
+    pie_chart = alt.Chart(df_format).mark_arc().encode(
+        theta=alt.Theta(field="VALUE", type="quantitative"),
+        color=alt.Color(field="GEO_NAME", type="nominal"),
+    )
+    st.altair_chart(pie_chart, use_container_width=True)    
+
+# start second visualization # 
+with st.expander(selected_category + " in " + selected_level + " " + selected_state + " Bubble Visual"):
+    chart = alt.Chart(df_format, title="Circle Chart").mark_circle().encode(
+            y='VALUE',
+            x='GEO_NAME',
+            size='sum(VALUE):Q',
+            color="GEO_NAME", 
+        ).interactive()
+    st.altair_chart(chart, theme="streamlit", use_container_width=True)
+# END second VISUALIZATION # 
+
+# start line visualization # 
+with st.expander(selected_category + " in " + selected_level + " " + selected_state  + " Line Visual"):
+    hover = alt.selection_single(
+        fields=["DATE"],
+        nearest=True,
+        on="mouseover",
+        empty="none",
+    )
+
+    lines = (
+        alt.Chart(df_format, title="Evolution of Value").mark_line().encode(
+            x='DATE',
+            y='VALUE',
+            color="GEO_NAME",
+        )
+    )
+
+    # Draw points on the line, and highlight based on selection
+    points = lines.transform_filter(hover).mark_circle(size=65)
+
+    # Draw a rule at the location of the selection
+    tooltips = (
+        alt.Chart(df_format).mark_rule().encode(
+            x="DATE",
+            y="VALUE",
+            opacity=alt.condition(hover, alt.value(0.3), alt.value(0)),
+            tooltip=[
+                alt.Tooltip("DATE"    , title="Date"),
+                alt.Tooltip("VALUE"   , title= selected_category + " in " + selected_level + " " + selected_state),
+                alt.Tooltip("GEO_NAME", title= selected_level),
+            ],
+        )
+        .add_selection(hover)
+    )
+
+    st.altair_chart(
+        (lines + points + tooltips).interactive(),
+        use_container_width=True
+    )
+
+
+#####################################################################
+#   END - CHART SECTION
+#####################################################################
+
+
+#####################################################################
+#   BEGIN - GEO-VISUAL SECTION
+#####################################################################
+
+if main_df is not None:
+
+    with st.expander(selected_category + " in " + selected_level + " " + selected_state + " Geo Visual"):
+        # Aggregate dataframe for data range
+        main_df_agg = main_df.groupby(['GEO_NAME','ZIP_CODES', 'CENTER_LAT', 'CENTER_LONG']).agg({'GEO_NAME': 'max', 'ZIP_CODES': 'max', 'CENTER_LAT': 'max', 'CENTER_LONG': 'max', 'VALUE': 'mean'})
+
+        # Assign map datafram with main aggregate dataframe lat, long, and value columns
+        map_df = pd.DataFrame().assign(lat=main_df_agg['CENTER_LAT'], lon=main_df_agg['CENTER_LONG'], size=main_df_agg['VALUE'], location=main_df_agg['GEO_NAME'])
 
         # Display dataframe
-        st.dataframe(main_df)
+        if debugging:
+            st.dataframe(map_df)
 
-    # Measuring time of dataframe display
-    start_query_time = time.perf_counter()
+        view_state = pdk.data_utils.compute_view(map_df[['lon','lat']])
+        view_state.pitch = 25
+        view_state.zoom = 5.7
 
-    # Display dataframe
-    st.dataframe(main_df)
+        # Get values for layer details
+        min_size = np.min(map_df['size'], axis=0)
+        max_size = np.max(map_df['size'], axis=0)
 
-    # Measuring time of dataframe display to help debugging performance
-    end_query_time = time.perf_counter()
-    elapsed_query_time = end_query_time - start_query_time
-    st.write(f'Elapsed time for dataframe display: {elapsed_query_time} seconds')
+        if debugging:
+            st.write(f'Min Size: {min_size} | Max Size: {max_size} | Min/Max Ratio: {min_size/max_size} | Max/Min Ratio: {max_size/min_size}')
 
-    st.write(f'Slicing dataframe...')
-    # Measuring time of dataframe display
-    start_query_time = time.perf_counter()
+        geo_layer = None
 
-    # Aggregate dataframe for data range
-    main_df_agg = main_df.groupby(['GEO_NAME','ZIP_CODES', 'CENTER_LAT', 'CENTER_LONG']).agg({'GEO_NAME': 'max', 'ZIP_CODES': 'max', 'CENTER_LAT': 'max', 'CENTER_LONG': 'max', 'VALUE': 'mean'})
-
-    # Assign map datafram with main aggregate dataframe lat, long, and value columns
-    map_df = pd.DataFrame().assign(lat=main_df_agg['CENTER_LAT'], lon=main_df_agg['CENTER_LONG'], size=main_df_agg['VALUE'], location=main_df_agg['GEO_NAME'])
-
-    # Measuring time of dataframe display to help debugging performance
-    end_query_time = time.perf_counter()
-    elapsed_query_time = end_query_time - start_query_time
-    st.write(f'Elapsed time for slicing dataframe: {elapsed_query_time} seconds')
-
-    # Display dataframe
-    st.dataframe(map_df)
-
-    view_state = pdk.data_utils.compute_view(map_df[['lon','lat']])
-    view_state.pitch = 25
-    view_state.zoom = 5.7
-
-    # Measuring time of dataframe display
-    start_query_time = time.perf_counter()
-
-    # Get values for layer details
-    min_size = np.min(map_df['size'], axis=0)
-    max_size = np.max(map_df['size'], axis=0)
-
-    st.write(f'Min Size: {min_size} | Max Size: {max_size} | Min/Max Ratio: {min_size/max_size} | Max/Min Ratio: {max_size/min_size}')
-
-    geo_layer = None
-
-    if selected_layer_type == 'Hexagon':
-        geo_layer = pdk.Layer(
-            'HexagonLayer',
-            data=map_df,
-            get_position='[lon, lat]',
-            radius=10000,
-            elevation_scale=min_size,
-            pickable=True,
-            extruded=True,
-            getElevationWeight="size",
-            coverage=1,
-            location="location",
-        ),
-    elif selected_layer_type == 'Blah':
-        geo_layer = pdk.Layer(
-            'HexagonLayer',
-            data=map_df,
-            get_position='[lon, lat]',
-            radius=500,
-            elevation_scale=25,
-            elevation_range=[0, 10000],
-            pickable=True,
-            extruded=True,
-            coverage=1,
-        ),
-    else:
-        geo_layer = pdk.Layer(
-            "HeatmapLayer",
-            data=map_df,
-            opacity=0.9,
-            get_position=["lon", "lat"],
-            getWeight='size',
-            location="location",
-        ),
+        if selected_layer_type == 'Hexagon':
+            geo_layer = pdk.Layer(
+                'HexagonLayer',
+                data=map_df,
+                get_position='[lon, lat]',
+                radius=10000,
+                elevation_scale=min_size,
+                pickable=True,
+                extruded=True,
+                getElevationWeight="size",
+                coverage=1,
+                location="location",
+            ),
+        elif selected_layer_type == 'Blah':
+            geo_layer = pdk.Layer(
+                'HexagonLayer',
+                data=map_df,
+                get_position='[lon, lat]',
+                radius=500,
+                elevation_scale=25,
+                elevation_range=[0, 10000],
+                pickable=True,
+                extruded=True,
+                coverage=1,
+            ),
+        else:
+            geo_layer = pdk.Layer(
+                "HeatmapLayer",
+                data=map_df,
+                opacity=0.9,
+                get_position=["lon", "lat"],
+                getWeight='size',
+                location="location",
+            ),
 
 
-    st.pydeck_chart(pdk.Deck(
-        map_style='dark',
-        #height=st.screen_height * 0.5,
-        initial_view_state=view_state,
-        #pdk.ViewState(
-        #    latitude=30.9433703,
-        #    longitude=-99.7004626,
-        #    zoom=5.7,
-        #    pitch=25,
-        #),
-        layers=[
-            geo_layer
-        ],
-        tooltip={
-            #'html': '<b>' + selected_category + ':</b> {elevationValue}<br><b>Location:</b> {location}<br> ',
-            'text': 'Location: {location} \r\n' + selected_category + ': {elevationValue}',
-            'style': {
-                'color': 'white'
+        st.pydeck_chart(pdk.Deck(
+            map_style='dark',
+            #height=st.screen_height * 0.5,
+            initial_view_state=view_state,
+            #pdk.ViewState(
+            #    latitude=30.9433703,
+            #    longitude=-99.7004626,
+            #    zoom=5.7,
+            #    pitch=25,
+            #),
+            layers=[
+                geo_layer
+            ],
+            tooltip={
+                #'html': '<b>' + selected_category + ':</b> {elevationValue}<br><b>Location:</b> {location}<br> ',
+                'text': selected_category + ': {elevationValue}',
+                'style': {
+                    'color': 'white'
+                }
             }
-        }
-    ))    
+        ))    
 
-    # Measuring time of dataframe display to help debugging performance
-    end_query_time = time.perf_counter()
-    elapsed_query_time = end_query_time - start_query_time
-    st.write(f'Elapsed time for graph display: {elapsed_query_time} seconds')
+#####################################################################
+#   END - GEO-VISUAL SECTION
+#####################################################################
