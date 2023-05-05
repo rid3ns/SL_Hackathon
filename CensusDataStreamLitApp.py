@@ -113,27 +113,28 @@ with st.container():
 
 
 # Get dataset for charts 
-df_format = get_data(selected_category, selected_level, selected_state + "Pie Visual")
+df_format = get_data(selected_category, selected_level, selected_state)
 # START FIRST COLLAPSABLE VISUALIZATION GROUPING. # 
-with st.expander(selected_category + " in " + selected_level + " " + selected_state):
+with st.expander(selected_category + " in " + selected_level + " " + selected_state + " Pie Visual"):
     pie_chart = alt.Chart(df_format).mark_arc().encode(
         theta=alt.Theta(field="VALUE", type="quantitative"),
         color=alt.Color(field="GEO_NAME", type="nominal"),
     )
-    st.altair_chart(pie_chart, use_container_width=False)    
+    st.altair_chart(pie_chart, use_container_width=True)    
 
 # start second visualization # 
-with st.expander(selected_category + " in " + selected_level + " " + selected_state + "Bubble Visual"):
+with st.expander(selected_category + " in " + selected_level + " " + selected_state + " Bubble Visual"):
     chart = alt.Chart(df_format, title="Circle Chart").mark_circle().encode(
             y='VALUE',
             x='GEO_NAME',
-            size='sum(VALUE):Q'
+            size='sum(VALUE):Q',
+            color="GEO_NAME", 
         ).interactive()
-    st.altair_chart(chart, theme="streamlit", use_container_width=False)
+    st.altair_chart(chart, theme="streamlit", use_container_width=True)
 # END second VISUALIZATION # 
 
 # start line visualization # 
-with st.expander(selected_category + " in " + selected_level + " " + selected_state  + "Line Visual"):
+with st.expander(selected_category + " in " + selected_level + " " + selected_state  + " Line Visual"):
     hover = alt.selection_single(
         fields=["DATE"],
         nearest=True,
