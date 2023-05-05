@@ -14,11 +14,11 @@ from dateutil.relativedelta import relativedelta
 nomi = pgeocode.Nominatim('US')
 
 # Page Config
-st.set_page_config(page_title="Testing Streamlit", layout="wide")
+st.set_page_config(page_title="Public Data Analytics", layout="wide")
 
 # Page Header/Subheader
-st.title("Texas Public Data Analytics")
-st.subheader("We data profilin', we looking at that data")
+st.title("Public Data Analytics")
+#st.subheader("We data profilin', we looking at that data")
 
 # Initialize snowpark connection. 
 hackathon_conn = st.experimental_connection('snowpark')
@@ -98,21 +98,109 @@ with st.expander(f'Testing Dynamic SQL Based On Categories'):
     # Create date input on sidebar based on min and max date values from dataset
     selected_date = st.sidebar.date_input(f"Date:", value=(main_df['DATE'].min(), main_df['DATE'].max()))#, min_value=min_date, max_value=max_date)
 
+    layer_types = ['Heat Map', 'Hexagon']
+
+    selected_layer_type = st.sidebar.selectbox('Select the layer type you would like to see on the geo graph.', layer_types)
+
     # If start and end date are chosen from date input, update dataframe date range
     if len(selected_date) == 2:
         selected_date_input = tuple(map(pd.to_datetime, selected_date))
         start_date, end_date = selected_date_input
 
+    
+        st.write(f'Slicing dataframe based on date...')
+        # Measuring time of dataframe display
+        start_query_time = time.perf_counter()
+
         main_df = main_df.loc[main_df['DATE'].between(start_date, end_date)]
+
+        # Measuring time of dataframe display to help debugging performance
+        end_query_time = time.perf_counter()
+        elapsed_query_time = end_query_time - start_query_time
+        st.write(f'Elapsed time for slicing dataframe: {elapsed_query_time} seconds')
+
+        # Display dataframe
+        st.dataframe(main_df)
+
+    # Measuring time of dataframe display
+    start_query_time = time.perf_counter()
 
     # Display dataframe
     st.dataframe(main_df)
 
-    map_df = pd.DataFrame().assign(lat=main_df['CENTER_LAT'], lon=main_df['CENTER_LONG'], elevation=main_df['VALUE'])
+    # Measuring time of dataframe display to help debugging performance
+    end_query_time = time.perf_counter()
+    elapsed_query_time = end_query_time - start_query_time
+    st.write(f'Elapsed time for dataframe display: {elapsed_query_time} seconds')
+
+    st.write(f'Slicing dataframe...')
+    # Measuring time of dataframe display
+    start_query_time = time.perf_counter()
+
+    # Aggregate dataframe for data range
+    main_df_agg = main_df.groupby(['GEO_NAME','ZIP_CODES', 'CENTER_LAT', 'CENTER_LONG']).agg({'GEO_NAME': 'max', 'ZIP_CODES': 'max', 'CENTER_LAT': 'max', 'CENTER_LONG': 'max', 'VALUE': 'mean'})
+
+    # Assign map datafram with main aggregate dataframe lat, long, and value columns
+    map_df = pd.DataFrame().assign(lat=main_df_agg['CENTER_LAT'], lon=main_df_agg['CENTER_LONG'], size=main_df_agg['VALUE'], location=main_df_agg['GEO_NAME'])
+
+    # Measuring time of dataframe display to help debugging performance
+    end_query_time = time.perf_counter()
+    elapsed_query_time = end_query_time - start_query_time
+    st.write(f'Elapsed time for slicing dataframe: {elapsed_query_time} seconds')
+
+    # Display dataframe
+    st.dataframe(map_df)
 
     view_state = pdk.data_utils.compute_view(map_df[['lon','lat']])
     view_state.pitch = 25
     view_state.zoom = 5.7
+
+    # Measuring time of dataframe display
+    start_query_time = time.perf_counter()
+
+    # Get values for layer details
+    min_size = np.min(map_df['size'], axis=0)
+    max_size = np.max(map_df['size'], axis=0)
+
+    st.write(f'Min Size: {min_size} | Max Size: {max_size} | Min/Max Ratio: {min_size/max_size} | Max/Min Ratio: {max_size/min_size}')
+
+    geo_layer = None
+
+    if selected_layer_type == 'Hexagon':
+        geo_layer = pdk.Layer(
+            'HexagonLayer',
+            data=map_df,
+            get_position='[lon, lat]',
+            radius=10000,
+            elevation_scale=min_size,
+            pickable=True,
+            extruded=True,
+            getElevationWeight="size",
+            coverage=1,
+            location="location",
+        ),
+    elif selected_layer_type == 'Blah':
+        geo_layer = pdk.Layer(
+            'HexagonLayer',
+            data=map_df,
+            get_position='[lon, lat]',
+            radius=500,
+            elevation_scale=25,
+            elevation_range=[0, 10000],
+            pickable=True,
+            extruded=True,
+            coverage=1,
+        ),
+    else:
+        geo_layer = pdk.Layer(
+            "HeatmapLayer",
+            data=map_df,
+            opacity=0.9,
+            get_position=["lon", "lat"],
+            getWeight='size',
+            location="location",
+        ),
+
 
     st.pydeck_chart(pdk.Deck(
         map_style='dark',
@@ -125,30 +213,18 @@ with st.expander(f'Testing Dynamic SQL Based On Categories'):
         #    pitch=25,
         #),
         layers=[
-            pdk.Layer(
-                'HexagonLayer',
-                data=map_df,
-                get_position='[lon, lat]',
-                radius=500,
-                elevation_scale=25,
-                elevation_range=[0, 10000],
-                pickable=True,
-                extruded=True,
-                get_elevation="VALUE",
-                coverage=1,
-            ),
-            pdk.Layer(
-                "HeatmapLayer",
-                data=map_df,
-                opacity=0.9,
-                get_position=["lon", "lat"],
-                get_elevation="VALUE",
-            ),
+            geo_layer
         ],
         tooltip={
-            'html': '<b>' + selected_category + ':</b> {elevationValue}',
+            #'html': '<b>' + selected_category + ':</b> {elevationValue}<br><b>Location:</b> {location}<br> ',
+            'text': 'Location: {location} \r\n' + selected_category + ': {elevationValue}',
             'style': {
                 'color': 'white'
             }
         }
     ))    
+
+    # Measuring time of dataframe display to help debugging performance
+    end_query_time = time.perf_counter()
+    elapsed_query_time = end_query_time - start_query_time
+    st.write(f'Elapsed time for graph display: {elapsed_query_time} seconds')
