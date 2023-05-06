@@ -23,8 +23,7 @@ from dateutil.relativedelta import relativedelta
 @st.cache_data
 def get_data(trigger, selected_category, selected_level, selected_state):
     hackathon_conn    = st.experimental_connection('snowpark')
-    if trigger == "chart":
-        
+    if trigger == "chart":       
         df_DataCommonsAgg =  hackathon_conn.session.table("DATA_COMMONS_AGG_filtered")
         source            = df_DataCommonsAgg.filter(  (col('"VARIABLE_NAME"') == selected_category) 
                                                     & (col('"LEVEL"')         == selected_level)
