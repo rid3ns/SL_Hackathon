@@ -2,12 +2,12 @@
 from snowflake.snowpark.session   import Session
 from snowflake.snowpark.types     import IntegerType, StringType, StructField, StructType, DateType, DecimalType
 from snowflake.snowpark.functions import avg, sum, col, call_udf, lit, call_builtin, year, to_decimal, split, trim
-from snowflake.snowpark import dataframe 
+from snowflake.snowpark           import dataframe 
 
 # graphing 
 import streamlit as st
-import pgeocode
-import altair as alt
+import pgeocode   
+import altair    as alt
 
 # analytics 
 import pandas as pd
@@ -19,34 +19,30 @@ from pydeck.types import String
 import sys
 import time
 import datetime
-from datetime import date
-from dateutil.relativedelta import relativedelta
+from   datetime               import date
+from   dateutil.relativedelta import relativedelta
 
+# Debugging flag. Setting up geocoding for United States
+nomi      = pgeocode.Nominatim('US')
+debugging = False
+
+# data caching
 @st.cache_data
 def get_data(selected_category, selected_sub_category, selected_level, selected_state):
 
     hackathon_conn = st.experimental_connection('snowpark')
 
-    # Assinging category to variable_name
-    variable_name = selected_category
-
-    # If there is a sub-category, append to category with colon in-betwee as this is how the value for the column VARIABLE_NAME is setup
+    # If there is a sub-category, append to category with colon in-between as this is how the value for the column VARIABLE_NAME is setup
     if selected_sub_category is not None:
-        variable_name = variable_name + ': ' + selected_sub_category
+        selected_category = selected_category + ': ' + selected_sub_category
 
     df_DataCommonsAgg = hackathon_conn.session.table("DATA_COMMONS_AGG_FILTERED_ZIP_CODES")
-    source            = df_DataCommonsAgg.filter(  (col('"VARIABLE_NAME"') == variable_name) 
+    source            = df_DataCommonsAgg.filter(  (col('"VARIABLE_NAME"') == selected_category) 
                                                  & (col('"LEVEL"')         == selected_level)
                                                  & (col('"STATE"')         == selected_state)
                                                  )\
                                          .select(['ZIP_CODES', 'VALUE', 'GEO_NAME', 'DATE', 'CENTER_LAT', 'CENTER_LONG', 'MIN_LAT', 'MIN_LONG', 'MAX_LAT', 'MAX_LONG']).to_pandas()
     return source
-
-# Debugging flag
-debugging = False
-
-# Setting up geocoding for United States
-nomi = pgeocode.Nominatim('US')
 
 # Page Config
 st.set_page_config(
