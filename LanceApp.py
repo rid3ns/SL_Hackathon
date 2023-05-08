@@ -38,9 +38,10 @@ st.set_page_config(
  )
 st.title("Public Data Analytics")
 
-# data caching
+# data caching - This is a caching system holding all the queries used throughout this dashboard. This allows for a single session to run all queries needed.
 @st.cache_data
 def get_data(query, selected_category, selected_sub_category, selected_level, selected_state):
+    # initialize snowpark connection
     hackathon_conn = st.experimental_connection('snowpark')
     if query == "chart":
         # If there is a sub-category, append to category with colon in-between as this is how the value for the column VARIABLE_NAME is setup
@@ -55,14 +56,10 @@ def get_data(query, selected_category, selected_sub_category, selected_level, se
                                             .select(['ZIP_CODES', 'VALUE', 'GEO_NAME', 'DATE', 'CENTER_LAT', 'CENTER_LONG', 'MIN_LAT', 'MIN_LONG', 'MAX_LAT', 'MAX_LONG']).to_pandas()
     elif query == "df_UNIQUE_STATE":
         df_LKP_Category    = hackathon_conn.session.table("LKP_CATEGORIES")
-        source    = df_LKP_Category.select(col("STATE")).distinct().to_pandas().sort_values(by='STATE')
+        source             = df_LKP_Category.select(col("STATE")).distinct().to_pandas().sort_values(by='STATE')
     elif query == "sub_categories_df":
-        
+        source    = hackathon_conn.session.table("LKP_CATEGORIES").to_pandas()
     return source
-
-
-# Initialize snowpark connection. 
-hackathon_conn = st.experimental_connection('snowpark')
 
 # Start Side Panel # - This code creates the side panel which filters the overall site 
 state_list        = []
@@ -72,12 +69,9 @@ sub_category_list = []
 
 layer_types = ['Heat Map', 'Hexagon']
 
-# tables to use in side Panel
-
-# Debug Checkbox
-# debugging = st.sidebar.checkbox('Debugging')
-sub_categories_df       = df_LKP_Category.to_pandas()
-
+# tables to use for sidebar setup. 
+sub_categories_df       = get_data("sub_categories_df", "", "", "", "")
+df_UNIQUE_STATE         = get_data("df_UNIQUE_STATE", "", "", "", "")
 # SideBar items
 selected_state          = st.sidebar.selectbox('Select the state you\'d like to see public data for.', df_UNIQUE_STATE)
 
@@ -93,7 +87,7 @@ selected_level          = st.sidebar.selectbox('Select the level you\'d like to 
 # Get Data
 # main_df = get_data_V2(selected_category, selected_sub_category, selected_level, selected_state)
 # Get dataset for charts 
-df_format = get_data(selected_category, selected_sub_category, selected_level, selected_state)
+df_format = get_data("chart", selected_category, selected_sub_category, selected_level, selected_state)
 
 start_date, end_date = date.today() - relativedelta(years=3), date.today()
 
