@@ -26,25 +26,7 @@ from   dateutil.relativedelta import relativedelta
 nomi      = pgeocode.Nominatim('US')
 debugging = False
 
-# data caching
-@st.cache_data
-def get_data(selected_category, selected_sub_category, selected_level, selected_state):
-
-    hackathon_conn = st.experimental_connection('snowpark')
-
-    # If there is a sub-category, append to category with colon in-between as this is how the value for the column VARIABLE_NAME is setup
-    if selected_sub_category is not None:
-        selected_category = selected_category + ': ' + selected_sub_category
-
-    df_DataCommonsAgg = hackathon_conn.session.table("DATA_COMMONS_AGG_FILTERED_ZIP_CODES")
-    source            = df_DataCommonsAgg.filter(  (col('"VARIABLE_NAME"') == selected_category) 
-                                                 & (col('"LEVEL"')         == selected_level)
-                                                 & (col('"STATE"')         == selected_state)
-                                                 )\
-                                         .select(['ZIP_CODES', 'VALUE', 'GEO_NAME', 'DATE', 'CENTER_LAT', 'CENTER_LONG', 'MIN_LAT', 'MIN_LONG', 'MAX_LAT', 'MAX_LONG']).to_pandas()
-    return source
-
-# Page Config
+# Page Config + Title 
 st.set_page_config(
     page_title="Census Engagement Data",
     page_icon="🧊",
@@ -54,9 +36,30 @@ st.set_page_config(
         'About': "This app builds a graphic model based off values provided by snowpark and snowflake data"
     }
  )
-
-# Page Header/Subheader
 st.title("Public Data Analytics")
+
+# data caching
+@st.cache_data
+def get_data(query, selected_category, selected_sub_category, selected_level, selected_state):
+    hackathon_conn = st.experimental_connection('snowpark')
+    if query == "chart":
+        # If there is a sub-category, append to category with colon in-between as this is how the value for the column VARIABLE_NAME is setup
+        if selected_sub_category is not None:
+            selected_category = selected_category + ': ' + selected_sub_category
+
+        df_DataCommonsAgg = hackathon_conn.session.table("DATA_COMMONS_AGG_FILTERED_ZIP_CODES")
+        source            = df_DataCommonsAgg.filter(  (col('"VARIABLE_NAME"') == selected_category) 
+                                                    & (col('"LEVEL"')         == selected_level)
+                                                    & (col('"STATE"')         == selected_state)
+                                                    )\
+                                            .select(['ZIP_CODES', 'VALUE', 'GEO_NAME', 'DATE', 'CENTER_LAT', 'CENTER_LONG', 'MIN_LAT', 'MIN_LONG', 'MAX_LAT', 'MAX_LONG']).to_pandas()
+    elif query == "df_UNIQUE_STATE":
+        df_LKP_Category    = hackathon_conn.session.table("LKP_CATEGORIES")
+        source    = df_LKP_Category.select(col("STATE")).distinct().to_pandas().sort_values(by='STATE')
+    elif query == "sub_categories_df":
+        
+    return source
+
 
 # Initialize snowpark connection. 
 hackathon_conn = st.experimental_connection('snowpark')
@@ -70,18 +73,14 @@ sub_category_list = []
 layer_types = ['Heat Map', 'Hexagon']
 
 # tables to use in side Panel
-df_LKP_Category    = hackathon_conn.session.table("LKP_CATEGORIES")
-df_UNIQUE_STATE    = df_LKP_Category.select(col("STATE")).distinct().to_pandas().sort_values(by='STATE')                 #df_LKP_Category['LEVEL'].unique().sort()
 
 # Debug Checkbox
 # debugging = st.sidebar.checkbox('Debugging')
-
 sub_categories_df       = df_LKP_Category.to_pandas()
 
 # SideBar items
 selected_state          = st.sidebar.selectbox('Select the state you\'d like to see public data for.', df_UNIQUE_STATE)
 
-#selected_category       = st.sidebar.selectbox('Select the category you\'d like to see.', df_UNIQUE_CATEGORIES)
 categories              = sub_categories_df["CATEGORY"].loc[sub_categories_df['STATE'] == selected_state].drop_duplicates().sort_values()
 selected_category       = st.sidebar.selectbox('Select the category you\'d like to see.', categories)
 
@@ -93,7 +92,6 @@ selected_level          = st.sidebar.selectbox('Select the level you\'d like to 
 
 # Get Data
 # main_df = get_data_V2(selected_category, selected_sub_category, selected_level, selected_state)
-
 # Get dataset for charts 
 df_format = get_data(selected_category, selected_sub_category, selected_level, selected_state)
 
@@ -101,7 +99,6 @@ start_date, end_date = date.today() - relativedelta(years=3), date.today()
 
 main_df = None
 if len(df_format) != 0:
-
     # Create date input on sidebar based on min and max date values from dataset
     selected_date       = st.sidebar.date_input(f"Date:", value=(df_format['DATE'].min(), df_format['DATE'].max()))
     selected_layer_type = st.sidebar.selectbox('Select the layer type you would like to see on the geo graph.', layer_types)
