@@ -2,12 +2,12 @@
 from snowflake.snowpark.session   import Session
 from snowflake.snowpark.types     import IntegerType, StringType, StructField, StructType, DateType, DecimalType
 from snowflake.snowpark.functions import avg, sum, col, call_udf, lit, call_builtin, year, to_decimal, split, trim
-from snowflake.snowpark           import dataframe 
+from snowflake.snowpark import dataframe 
 
 # graphing 
 import streamlit as st
-import pgeocode   
-import altair    as alt
+import pgeocode
+import altair as alt
 
 # analytics 
 import pandas as pd
@@ -19,14 +19,36 @@ from pydeck.types import String
 import sys
 import time
 import datetime
-from   datetime               import date
-from   dateutil.relativedelta import relativedelta
+from datetime import date
+from dateutil.relativedelta import relativedelta
 
-# Debugging flag. Setting up geocoding for United States
-nomi      = pgeocode.Nominatim('US')
+@st.cache_data
+def get_data(selected_category, selected_sub_category, selected_level, selected_state):
+
+    hackathon_conn = st.experimental_connection('snowpark')
+
+    # Assinging category to variable_name
+    variable_name = selected_category
+
+    # If there is a sub-category, append to category with colon in-betwee as this is how the value for the column VARIABLE_NAME is setup
+    if selected_sub_category is not None:
+        variable_name = variable_name + ': ' + selected_sub_category
+
+    df_DataCommonsAgg = hackathon_conn.session.table("DATA_COMMONS_AGG_FILTERED_ZIP_CODES")
+    source            = df_DataCommonsAgg.filter(  (col('"VARIABLE_NAME"') == variable_name) 
+                                                 & (col('"LEVEL"')         == selected_level)
+                                                 & (col('"STATE"')         == selected_state)
+                                                 )\
+                                         .select(['ZIP_CODES', 'VALUE', 'GEO_NAME', 'DATE', 'CENTER_LAT', 'CENTER_LONG', 'MIN_LAT', 'MIN_LONG', 'MAX_LAT', 'MAX_LONG']).to_pandas()
+    return source
+
+# Debugging flag
 debugging = False
 
-# Page Config + Title 
+# Setting up geocoding for United States
+nomi = pgeocode.Nominatim('US')
+
+# Page Config
 st.set_page_config(
     page_title="Census Engagement Data",
     page_icon="🧊",
@@ -36,30 +58,9 @@ st.set_page_config(
         'About': "This app builds a graphic model based off values provided by snowpark and snowflake data"
     }
  )
+
+# Page Header/Subheader
 st.title("Public Data Analytics")
-
-# data caching
-@st.cache_data
-def get_data(query, selected_category, selected_sub_category, selected_level, selected_state):
-    hackathon_conn = st.experimental_connection('snowpark')
-    if query == "chart":
-        # If there is a sub-category, append to category with colon in-between as this is how the value for the column VARIABLE_NAME is setup
-        if selected_sub_category is not None:
-            selected_category = selected_category + ': ' + selected_sub_category
-
-        df_DataCommonsAgg = hackathon_conn.session.table("DATA_COMMONS_AGG_FILTERED_ZIP_CODES")
-        source            = df_DataCommonsAgg.filter(  (col('"VARIABLE_NAME"') == selected_category) 
-                                                    & (col('"LEVEL"')         == selected_level)
-                                                    & (col('"STATE"')         == selected_state)
-                                                    )\
-                                            .select(['ZIP_CODES', 'VALUE', 'GEO_NAME', 'DATE', 'CENTER_LAT', 'CENTER_LONG', 'MIN_LAT', 'MIN_LONG', 'MAX_LAT', 'MAX_LONG']).to_pandas()
-    elif query == "df_UNIQUE_STATE":
-        df_LKP_Category    = hackathon_conn.session.table("LKP_CATEGORIES")
-        source    = df_LKP_Category.select(col("STATE")).distinct().to_pandas().sort_values(by='STATE')
-    elif query == "sub_categories_df":
-        
-    return source
-
 
 # Initialize snowpark connection. 
 hackathon_conn = st.experimental_connection('snowpark')
@@ -73,14 +74,18 @@ sub_category_list = []
 layer_types = ['Heat Map', 'Hexagon']
 
 # tables to use in side Panel
+df_LKP_Category    = hackathon_conn.session.table("LKP_CATEGORIES")
+df_UNIQUE_STATE    = df_LKP_Category.select(col("STATE")).distinct().to_pandas().sort_values(by='STATE')                 #df_LKP_Category['LEVEL'].unique().sort()
 
 # Debug Checkbox
 # debugging = st.sidebar.checkbox('Debugging')
+
 sub_categories_df       = df_LKP_Category.to_pandas()
 
 # SideBar items
 selected_state          = st.sidebar.selectbox('Select the state you\'d like to see public data for.', df_UNIQUE_STATE)
 
+#selected_category       = st.sidebar.selectbox('Select the category you\'d like to see.', df_UNIQUE_CATEGORIES)
 categories              = sub_categories_df["CATEGORY"].loc[sub_categories_df['STATE'] == selected_state].drop_duplicates().sort_values()
 selected_category       = st.sidebar.selectbox('Select the category you\'d like to see.', categories)
 
@@ -92,6 +97,7 @@ selected_level          = st.sidebar.selectbox('Select the level you\'d like to 
 
 # Get Data
 # main_df = get_data_V2(selected_category, selected_sub_category, selected_level, selected_state)
+
 # Get dataset for charts 
 df_format = get_data(selected_category, selected_sub_category, selected_level, selected_state)
 
@@ -99,6 +105,7 @@ start_date, end_date = date.today() - relativedelta(years=3), date.today()
 
 main_df = None
 if len(df_format) != 0:
+
     # Create date input on sidebar based on min and max date values from dataset
     selected_date       = st.sidebar.date_input(f"Date:", value=(df_format['DATE'].min(), df_format['DATE'].max()))
     selected_layer_type = st.sidebar.selectbox('Select the layer type you would like to see on the geo graph.', layer_types)
