@@ -1,2 +1,8 @@
 [theme]
-base="dark"
+base="light"
+primaryColor="#ffffff"
+secondarybackgroundColor="#ffffff"
+backgroundColor="#072e5e"
+textColor="#ffffff"
+font="sans serif"
+
