@@ -1,0 +1,46 @@
+import streamlit as st
+import pandas as pd
+import snowflake.connector
+from langchain.agents import create_pandas_dataframe_agent
+from langchain.chat_models import ChatOpenAI
+from dotenv import load_dotenv
+from tenacity import (retry, stop_after_attempt, wait_random_exponential)
+
+def main():
+    load_dotenv('ArmetaHackathon_PV3.10\.env')
+
+    cnx = snowflake.connector.connect(
+        user='lwahlert', 
+        password='JSKDFJ&7#^dfd', 
+        account='zs31584.east-us-2.azure',
+        role='SF_HACKATHON_ROLE',
+        warehouse='SF_HACKATHON_WH',
+        database='SF_HACKATHON'
+    )
+    cur = cnx.cursor()
+      
+    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
+    def getresponse(agent, query):
+        return agent.run(query)
+
+ #import snowflake tables
+    query = f"SELECT * FROM SF_HACKATHON.HACKATHON.DALLASZIPCODES LIMIT 100"
+    cur.execute(query)
+
+    df = cur.fetch_pandas_all()
+    
+    st.set_page_config(page_title="hackathon poc")
+    st.header("hackathon poc")
+
+    st.table(df.head(5))
+
+    query = st.text_input("chat with your table")
+
+    agent = create_pandas_dataframe_agent(ChatOpenAI(temperature=0), df, verbose=True)
+
+    if query is not None and query != "":
+        st.write(getresponse(agent, query))
+
+
+if __name__ == "__main__":
+    main()
