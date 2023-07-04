@@ -14,7 +14,7 @@ from tenacity import (retry, stop_after_attempt, wait_random_exponential)
 
 def main():
     #load_dotenv('ArmetaHackathon_PV3.10\.env')
-    llm = ChatOpenAI(openai_api_key='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')
+    llm = ChatOpenAI(openai_api_key='API Key')
 
     conn = snowflake.connector.connect(
     user='CSUMMERS',
