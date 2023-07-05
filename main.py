@@ -14,7 +14,7 @@ from tenacity import (retry, stop_after_attempt, wait_random_exponential)
 
 def main():
     #load_dotenv('ArmetaHackathon_PV3.10\.env')
-    llm = ChatOpenAI(openai_api_key='API Key')
+    llm = ChatOpenAI(openai_api_key='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')
 
     conn = snowflake.connector.connect(
     user='CSUMMERS',
@@ -28,16 +28,16 @@ def main():
 
     cur = conn.cursor()
       
-    @retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
-    def getresponse(agent, query):
-        return agent.run(query)
+    #@retry(wait=wait_random_exponential(min=1, max=60), stop=stop_after_attempt(6))
+    #def getresponse(agent, query):
+    #    return agent.run(query)
     
     st.set_page_config(page_title="Tabular Profiling Tool")
     st.header("Tabular Profiling Tool")
 
     #import snowflake tables
     showtables = 'SHOW TABLES in SF_HACKATHON."Test Team"'
-    resulttables = 'SELECT "name" FROM table(RESULT_SCAN(LAST_QUERY_ID()))'
+    resulttables = 'SELECT "name" as Dataset FROM table(RESULT_SCAN(LAST_QUERY_ID()))'
 
     #Executes query that returns table names in the Test Team schema
     cur.execute(showtables)
@@ -68,7 +68,7 @@ def main():
         else: st.write('')
 
     def CustomPrompt(df):
-        query = st.text_input("Chat with your table")
+        query = st.text_input("Chat with your table:")
         if st.button('Click to Execute'):
             st.write('Answer:')
             myagent(query, df)
@@ -79,7 +79,7 @@ def main():
         myagent(thestring, df)
     
     def myagent(query, df):
-        agent = create_pandas_dataframe_agent(ChatOpenAI(temperature=0), df, verbose=True)
+        agent = create_pandas_dataframe_agent(ChatOpenAI(temperature=0, model="gpt-3.5-turbo-16k"), df, verbose=True)
         #agent.run(query)
         st_callback = StreamlitCallbackHandler(st.container())
         response = agent.run(query, callbacks=[st_callback])
